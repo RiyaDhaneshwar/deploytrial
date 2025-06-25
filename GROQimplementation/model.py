@@ -1,7 +1,16 @@
 import streamlit as st
 from typing import Generator
 from groq import Groq
+import boto3
+from botocore.exceptions import NoCredentialsError
+from botocore.exceptions import ClientError
 
+# === Load AWS Credentials from .streamlit/secrets.toml ===
+aws_access_key_id = st.secrets["aws"]["access_key"]
+aws_secret_access_key = st.secrets["aws"]["secret_key"]
+bucket_name = st.secrets["aws"]["bucket_name"]
+region_name = st.secrets["aws"]["region"]
+folder_prefix = "download-uploads2/"
 
 st.set_page_config(page_icon="💬", layout="wide",
                    page_title="Groq Testing")
@@ -65,6 +74,52 @@ with col2:
         help=f"Adjust the maximum number of tokens (words) for the model's response. Max for selected model: {max_tokens_range}"
     )
    
+# Uploading docs to s3 
+uploaded_file = st.file_uploader(" ", type=['txt', 'pdf', 'docx', 'ppt'], label_visibility="collapsed")
+if uploaded_file:
+        st.session_state.messages.append({"role": "user", "content": f"📎 Uploaded file: {uploaded_file.name}"})
+
+
+custom_folder = "uploads"
+if uploaded_file is not None:
+    file_name = f"{custom_folder}/{uploaded_file.name}"
+
+    try:
+        # Initialize S3 client
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            region_name=region_name
+        )
+
+        # Upload file
+        s3.upload_fileobj(uploaded_file, bucket_name, file_name)
+        st.success(f"✅ File '{file_name}' uploaded successfully to '{bucket_name}'!")
+    
+    except NoCredentialsError:
+        st.error("❌ AWS credentials not found.")
+    except Exception as e:
+        st.error(f"❌ Upload failed: {e}")
+ 
+# === List files in folder ===
+selected_file = st.selectbox("Select files to delete")
+try:
+    response = s3.list_objects_v2(Bucket=bucket_name, Prefix=folder_prefix)
+    if "Contents" in response:
+        files = [obj["Key"] for obj in response["Contents"] if not obj["Key"].endswith("/")]
+        selected_file = st.selectbox("Select a file to delete", files)
+
+        if st.button("Delete File"):
+            try:
+                s3.delete_object(Bucket=bucket_name, Key=selected_file)
+                st.success(f"✅ '{selected_file}' deleted successfully.")
+            except ClientError as e:
+                st.error(f"❌ Delete failed: {e}")
+    else:
+        st.info("No files found.")
+except Exception as e:
+    st.error(f"❌ Failed to list files: {e}")
         
 # Display chat messages from history on app rerun
 for message in st.session_state.messages:
