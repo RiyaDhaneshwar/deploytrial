@@ -1,0 +1,6 @@
+env:
+   GROQ_API_KEY= ${{ secrets.GROQ_API_KEY }}
+   access_key = ${{ secrets.access_key }}
+   secret_key = ${{ secrets.secret_key }}
+   bucket_name =${{ secrets.bucket_key }}
+   region = ${{ secrets.region }}
