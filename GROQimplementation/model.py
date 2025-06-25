@@ -13,7 +13,7 @@ region_name = st.secrets["aws"]["region"]
 folder_prefix = "download-uploads2/"
 
 st.set_page_config(page_icon="💬", layout="wide",
-                   page_title="Groq Testing")
+                   page_title="RAG Chatbot")
 
 
 def icon(emoji: str):
