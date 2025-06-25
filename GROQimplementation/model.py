@@ -6,10 +6,10 @@ from botocore.exceptions import NoCredentialsError
 from botocore.exceptions import ClientError
 
 # === Load AWS Credentials from .streamlit/secrets.toml ===
-aws_access_key_id = keys.secrets["aws"]["access_key"]
-aws_secret_access_key = keys.secrets["aws"]["secret_key"]
-bucket_name = keys.secrets["aws"]["bucket_name"]
-region_name = keys.secrets["aws"]["region"]
+aws_access_key_id = st.secrets["aws"]["access_key"]
+aws_secret_access_key = st.secrets["aws"]["secret_key"]
+bucket_name = st.secrets["aws"]["bucket_name"]
+region_name = st.secrets["aws"]["region"]
 folder_prefix = "download-uploads2/"
 
 st.set_page_config(page_icon="💬", layout="wide",
@@ -29,7 +29,7 @@ icon("🤖")
 st.subheader("Groq Testing App", divider="rainbow", anchor=False)
 
 client = Groq(
-    api_key=keys.secrets["GROQ_API_KEY"],
+    api_key=st.secrets["GROQ_API_KEY"],
 )
 
 # Initialize chat history and selected model
