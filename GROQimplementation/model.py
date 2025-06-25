@@ -26,7 +26,7 @@ def icon(emoji: str):
 
 icon("🤖")
 
-st.subheader("Groq Testing App", divider="rainbow", anchor=False)
+st.subheader("RAG Chatbot", divider="rainbow", anchor=False)
 
 client = Groq(
     api_key=st.secrets["GROQ_API_KEY"],
