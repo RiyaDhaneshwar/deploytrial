@@ -102,25 +102,6 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"❌ Upload failed: {e}")
  
-# === List files in folder ===
-selected_file = st.selectbox("Select files to delete")
-try:
-    response = s3.list_objects_v2(Bucket=bucket_name, Prefix=folder_prefix)
-    if "Contents" in response:
-        files = [obj["Key"] for obj in response["Contents"] if not obj["Key"].endswith("/")]
-        selected_file = st.selectbox("Select a file to delete", files)
-
-        if st.button("Delete File"):
-            try:
-                s3.delete_object(Bucket=bucket_name, Key=selected_file)
-                st.success(f"✅ '{selected_file}' deleted successfully.")
-            except ClientError as e:
-                st.error(f"❌ Delete failed: {e}")
-    else:
-        st.info("No files found.")
-except Exception as e:
-    st.error(f"❌ Failed to list files: {e}")
-        
 # Display chat messages from history on app rerun
 for message in st.session_state.messages:
     avatar = '🤖' if message["role"] == "assistant" else '👩‍💻'
