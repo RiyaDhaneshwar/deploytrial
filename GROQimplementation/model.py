@@ -12,7 +12,7 @@ import base64
 
 load_dotenv()
 
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+API_URL = os.getenv("API_URL", "https://deploytrial-backend.streamlit.app/")
 
 st.set_page_config(page_icon="💬", layout="wide",
                    page_title="Multi-Org Groq Testing")
