@@ -7,9 +7,12 @@ import hashlib
 import role_modfication as rm
 import re
 import os
+from dotenv import load_dotenv
+import base64
 
-# === Load API and other config from .streamlit/secrets.toml or hardcode for dev ===
-API_URL = st.secrets["api"]["url"] if "api" in st.secrets and "url" in st.secrets["api"] else "http://localhost:8000"
+load_dotenv()
+
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 st.set_page_config(page_icon="💬", layout="wide",
                    page_title="Multi-Org Groq Testing")
@@ -165,45 +168,52 @@ with tab1:
             st.sidebar.info(f"**{role_info['name']}**\n\n{role_info['description']}")
             permissions = ", ".join(role_info['permissions'])
             st.sidebar.caption(f"Permissions: {permissions}")
-        
-        # Add index management section
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("🔍 Index Management")
-        
-        if st.sidebar.button("🔄 Rebuild Index"):
-            try:
-                response = requests.post(f"{API_URL}/rebuild_index", params={
-                    "org": organization,
-                    "dept": department,
-                    "base_output_dir": "document-upload2/test-output"
-                })
-                if response.status_code == 200:
-                    data = response.json()
-                    st.sidebar.success(f"✅ {data['message']}\n📄 Documents loaded: {data['documents_loaded']}")
-                else:
-                    st.sidebar.error(f"❌ Failed to rebuild index: {response.text}")
-            except Exception as e:
-                st.sidebar.error(f"❌ Error: {e}")
-        
-        # Show index status
-        try:
-            status_response = requests.get(f"{API_URL}/index_status")
-            if status_response.status_code == 200:
-                status_data = status_response.json()
-                if status_data['index_built']:
-                    st.sidebar.info(f"📊 Index Status:\n• Documents: {status_data['total_documents']}\n• Index Size: {status_data['index_size']}")
-                else:
-                    st.sidebar.warning("⚠️ Index not built")
-        except Exception as e:
-            st.sidebar.error(f"❌ Cannot check index status: {e}")
 
     # Validate user profile completeness
     profile_complete = all([organization, department, user_email]) and st.session_state.user_authenticated
 
     if profile_complete:
         st.sidebar.success("✅ Profile Complete")
+        try:
+            response = requests.post(API_URL, json=st.session_state.user_profile)
+            if response.status_code == 200:
+                result = response.json()
+                st.success(result["message"])
+                st.info(f'Documents Loaded: {result["documents_loaded"]}')
+            else:
+                st.error(f"Failed: {response.text}")
+        except Exception as e:
+            st.error(f"Error connecting to API: {e}")
     else:
         st.sidebar.warning("⚠️ Complete all fields to proceed")
+
+    # Main content area
+    col1, col2 = st.columns(2)
+
+    with col1:
+        model_option = st.selectbox(
+            "Choose a model:",
+            options=list(models.keys()),
+            format_func=lambda x: models[x]["name"],
+            index=0
+        )
+
+    # Detect model change and clear chat history if model has changed
+    if st.session_state.selected_model != model_option:
+        st.session_state.messages = []
+        st.session_state.selected_model = model_option
+
+    max_tokens_range = 8192
+
+    with col2:
+        max_tokens = st.slider(
+            "Max Tokens:",
+            min_value=512,
+            max_value=max_tokens_range,
+            value=min(32768, max_tokens_range),
+            step=512,
+            help=f"Adjust the maximum number of tokens for the model's response. Max: {max_tokens_range}"
+        )
 
     # --- File Upload Section (calls FastAPI backend) ---
     st.subheader("📄 Document Upload")
@@ -227,10 +237,6 @@ with tab1:
 
     # Handle file upload via API
     if uploaded_file and st.session_state.user_authenticated:
-        st.session_state.messages.append({
-            "role": "user", 
-            "content": f"📎 Uploaded file: {uploaded_file.name} ({organization}/{department})"
-        })
         try:
             # Save file temporarily
             with open(uploaded_file.name, "wb") as f:
@@ -273,16 +279,56 @@ with tab1:
                 st.markdown(prompt)
             # Call backend for answer
             try:
-                response = requests.post(f"{API_URL}/Answer", json={"query": prompt})
+                response = requests.post(f"{API_URL}/Answer", json={
+                    "query": prompt,
+                    "org": st.session_state.user_profile["organization"],
+                    "dept": st.session_state.user_profile["department"]
+                })
                 if response.status_code == 200:
                     data = response.json()
                     answer = data.get("result", "No answer returned.")
                     st.session_state.messages.append({"role": "assistant", "content": answer})
                     with st.chat_message("assistant", avatar="🤖"):
                         st.markdown(answer)
-                    # Show source documents if available
+
+                    # Display relevant documents
                     if "source_documents" in data:
-                        st.info(f"Source Documents: {data['source_documents']}")
+                        st.markdown("## 📂 Source Documents")
+                        for doc_key in data["source_documents"]:
+                            parts = doc_key.split("/")
+                            doc_id = parts[-2] if len(parts) >= 2 else doc_key
+                            try:
+                                doc_response = requests.get(
+                                    f"{API_URL}/get_source_document/{doc_id}",
+                                    params={
+                                        "org": st.session_state.user_profile["organization"],
+                                        "dept": st.session_state.user_profile["department"]
+                                    }
+                                )
+
+                                if doc_response.status_code == 200:
+                                    doc_data = doc_response.json()
+                                    st.markdown(f"### 📄 Document: `{doc_data['doc_id']}`")
+
+                                    # Text chunks
+                                    if doc_data.get("text_chunks"):
+                                        st.markdown("#### 📝 Text Chunks")
+                                        for txt in doc_data["text_chunks"]:
+                                            st.code(txt["content"])
+
+                                    # Image chunks
+                                    if doc_data.get("images"):
+                                        st.markdown("#### 🖼️ Images")
+                                        for img in doc_data["images"]:
+                                            st.markdown(f"**{img['key']}**")
+                                            try:
+                                                st.image(base64.b64decode(img["base64"]), use_column_width=True)
+                                            except Exception as decode_err:
+                                                st.warning(f"⚠️ Failed to decode image: {decode_err}")
+                                else:
+                                    st.warning(f"⚠️ Could not load content for `{doc_id}`: {doc_response.text}")
+                            except Exception as fetch_err:
+                                st.error(f"❌ Error fetching document `{doc_id}`: {fetch_err}")
                 else:
                     st.error(f"❌ Error: {response.text}")
             except Exception as e:
