@@ -12,7 +12,7 @@ import base64
 
 load_dotenv()
 
-API_URL = os.getenv("API_URL", "https://deploytrial-backend.streamlit.app/")
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 st.set_page_config(page_icon="💬", layout="wide",
                    page_title="Multi-Org Groq Testing")
@@ -254,6 +254,10 @@ with tab1:
             if response.status_code == 200:
                 st.success(f"✅ File uploaded and processed successfully!")
                 st.json(response.json())
+                # Clear deleted documents cache and refresh list after successful upload
+                if "deleted_documents" in st.session_state:
+                    st.session_state.deleted_documents = set()
+                st.rerun()
             else:
                 st.error(f"❌ Upload failed: {response.text}")
         except Exception as e:
@@ -261,6 +265,97 @@ with tab1:
         finally:
             if os.path.exists(uploaded_file.name):
                 os.remove(uploaded_file.name)
+
+    # --- Document Management Section ---
+    st.subheader("🗂️ Document Management")
+    
+    if not st.session_state.user_authenticated:
+        st.warning("🔒 Please complete your profile and authenticate to manage documents.")
+    elif not validate_upload_permissions(st.session_state.user_profile.get("role", "")):
+        st.error("❌ You don't have permission to manage documents.")
+    else:
+        # Initialize deleted documents tracking in session state
+        if "deleted_documents" not in st.session_state:
+            st.session_state.deleted_documents = set()
+        
+        # Clear deleted documents if organization or department changes
+        if "current_org_dept" not in st.session_state:
+            st.session_state.current_org_dept = f"{organization}_{department}"
+        elif st.session_state.current_org_dept != f"{organization}_{department}":
+            st.session_state.deleted_documents = set()
+            st.session_state.current_org_dept = f"{organization}_{department}"
+        
+        # List documents
+        try:
+            params = {
+                "org": organization,
+                "dept": department,
+                "base_output_dir": "document-upload2/test-output"
+            }
+            response = requests.get(f"{API_URL}/list_documents", params=params)
+            
+            if response.status_code == 200:
+                data = response.json()
+                documents = data.get("documents", [])
+                
+                # Filter out deleted documents
+                active_documents = [doc for doc in documents if doc['doc_id'] not in st.session_state.deleted_documents]
+                
+                if active_documents:
+                    st.write(f"**Found {len(active_documents)} document(s):**")
+                    
+                    # Create a container for documents
+                    doc_container = st.container()
+                    
+                    for doc in active_documents:
+                        # Check if this document was just deleted
+                        if doc['doc_id'] in st.session_state.deleted_documents:
+                            continue  # Skip this document if it was deleted
+                            
+                        with doc_container.expander(f"📄 {doc['doc_id']} ({doc['text_chunks']} text chunks, {doc['images']} images)"):
+                            col1, col2 = st.columns([3, 1])
+                            
+                            with col1:
+                                st.write(f"**Document ID:** {doc['doc_id']}")
+                                st.write(f"**Text Chunks:** {doc['text_chunks']}")
+                                st.write(f"**Images:** {doc['images']}")
+                                if doc['upload_date']:
+                                    st.write(f"**Upload Date:** {doc['upload_date']}")
+                            
+                            with col2:
+                                # Use a unique key for each delete button
+                                delete_key = f"delete_btn_{doc['doc_id']}"
+                                if st.button(f"🗑️ Delete", key=delete_key):
+                                    # Perform the actual deletion
+                                    try:
+                                        delete_response = requests.delete(
+                                            f"{API_URL}/delete_document",
+                                            params={
+                                                "org": organization,
+                                                "dept": department,
+                                                "doc_id": doc['doc_id'],
+                                                "base_output_dir": "document-upload2/test-output"
+                                            }
+                                        )
+                                        
+                                        if delete_response.status_code == 200:
+                                            # Add to deleted documents set
+                                            st.session_state.deleted_documents.add(doc['doc_id'])
+                                            st.success(f"✅ Document {doc['doc_id']} deleted successfully!")
+                                            # Force rerun to update the list immediately
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ Failed to delete document: {delete_response.text}")
+                                    except Exception as e:
+                                        st.error(f"❌ Error deleting document: {e}")
+                else:
+                    st.info("📭 No documents found for this organization and department.")
+                    
+            else:
+                st.error(f"❌ Failed to fetch documents: {response.text}")
+                
+        except Exception as e:
+            st.error(f"❌ Error managing documents: {e}")
 
     # --- Chat Interface (calls FastAPI backend) ---
     st.subheader("💬 Chat Interface")
