@@ -407,3 +407,81 @@ def get_source_document(doc_id: str, org: str, dept: str, base_output_dir: str =
         raise HTTPException(status_code=500, detail=f"S3 access failed: {e.response['Error']['Message']}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.delete("/delete_document")
+def delete_document(org: str, dept: str, doc_id: str, base_output_dir: str = "document-upload2/test-output"):
+    """Delete a document and all its associated files from S3"""
+    try:
+        prefix = f"{base_output_dir}/{org}/{dept}/{doc_id}/"
+        
+        # List all objects with this prefix
+        response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+        
+        if 'Contents' not in response:
+            raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+        
+        # Delete all objects with this prefix
+        objects_to_delete = [{'Key': obj['Key']} for obj in response['Contents']]
+        
+        if objects_to_delete:
+            s3.delete_objects(
+                Bucket=S3_BUCKET,
+                Delete={'Objects': objects_to_delete}
+            )
+            print(f"[Delete] Deleted {len(objects_to_delete)} objects for document {doc_id}")
+        
+        # Rebuild the index after deletion
+        org_dept_prefix = f"{base_output_dir}/{org}/{dept}"
+        reload_index_s3(org_dept_prefix)
+        
+        return {
+            "status": "success",
+            "message": f"Document {doc_id} and all associated files deleted successfully",
+            "deleted_objects": len(objects_to_delete),
+            "index_rebuilt": True
+        }
+        
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'NoSuchKey':
+            raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+        else:
+            raise HTTPException(status_code=500, detail=f"AWS S3 error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
+
+@app.get("/list_documents")
+def list_documents(org: str, dept: str, base_output_dir: str = "document-upload2/test-output"):
+    """List all documents for a specific organization and department"""
+    try:
+        prefix = f"{base_output_dir}/{org}/{dept}/"
+        response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix, Delimiter='/')
+        
+        documents = []
+        if 'CommonPrefixes' in response:
+            for prefix_info in response['CommonPrefixes']:
+                doc_path = prefix_info['Prefix']
+                doc_id = doc_path.rstrip('/').split('/')[-1]
+                
+                # Get document details
+                doc_prefix = f"{prefix}{doc_id}/"
+                doc_response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=doc_prefix)
+                
+                if 'Contents' in doc_response:
+                    text_files = [obj['Key'] for obj in doc_response['Contents'] if obj['Key'].endswith('.txt')]
+                    image_files = [obj['Key'] for obj in doc_response['Contents'] if obj['Key'].lower().endswith(('.png', '.jpg', '.jpeg'))]
+                    
+                    documents.append({
+                        "doc_id": doc_id,
+                        "text_chunks": len(text_files),
+                        "images": len(image_files),
+                        "upload_date": doc_response['Contents'][0]['LastModified'].isoformat() if doc_response['Contents'] else None
+                    })
+        
+        return {
+            "documents": documents,
+            "total_documents": len(documents)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
